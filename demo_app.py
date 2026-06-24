@@ -203,12 +203,14 @@ class FeishuClient:
             .build()
         response = self.client.contact.v3.user.get(request)
         if not response.success():
-            print(f"get user failed: code={response.code}, msg={response.msg}")
+            logger.error("get user failed: code=%s, msg=%s, log_id=%s",
+                         response.code, response.msg, response.get_log_id())
             return None, None
         user = response.data.user
         dept_ids = user.department_ids
         dept_id = dept_ids[0] if dept_ids else ""
         name = getattr(user, "name", "") or ""
+        logger.info("get_user_department: name=%s, dept=%s", name, dept_id)
         return dept_id, name
 
     def upload_file_to_feishu(self, file_path):
@@ -1194,11 +1196,15 @@ def main():
                     st.error("手机号未找到对应用户")
                     return
                 department_id, user_name = client.get_user_department(open_id)
+                if not user_name:
+                    logger.warning("get_user_department returned empty name for open_id=%s, dept=%s", open_id, department_id)
+                else:
+                    logger.info("Logged in: %s (open_id=%s)", user_name, open_id)
                 st.session_state.logged_in = True
                 st.session_state.open_id = open_id
                 st.session_state.department_id = department_id or ""
-                st.session_state.user_name = user_name or mobile
-                st.success(f"登录成功：{user_name} ({open_id})")
+                st.session_state.user_name = user_name or open_id
+                st.success(f"登录成功：{user_name or open_id}")
                 st.rerun()
             except Exception as e:
                 st.error(f"登录失败：{e}")
