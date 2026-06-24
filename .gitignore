@@ -1,0 +1,24 @@
+# Environment variables (DO NOT commit real credentials)
+.env
+
+# Internal planning
+.omo/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+*Zone.Identifier
+
+# Temp files
+*.tmp
+test_*_mock.py
