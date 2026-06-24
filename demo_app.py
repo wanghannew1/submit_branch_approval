@@ -216,9 +216,9 @@ class FeishuClient:
         logger.info("basic_batch: name=%s", name)
         return "", name
 
-    def upload_file_to_feishu(self, file_path):
+    def upload_file_to_feishu(self, file_path, filename=None):
         """上传文件到飞书审批系统，返回 file_code"""
-        filename = os.path.basename(file_path)
+        filename = filename or os.path.basename(file_path)
         with open(file_path, "rb") as f:
             file_bytes = f.read()
 
@@ -1421,7 +1421,7 @@ def main():
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
                     tmp.write(file_bytes)
                     tmp_path = tmp.name
-                file_code = client.upload_file_to_feishu(tmp_path)
+                file_code = client.upload_file_to_feishu(tmp_path, filename=upfile.name)
                 os.unlink(tmp_path)
                 if file_code:
                     file_codes.append(file_code)
@@ -1435,7 +1435,7 @@ def main():
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
                     tmp.write(summary_bytes)
                     tmp_path = tmp.name
-                file_code = client.upload_file_to_feishu(tmp_path)
+                file_code = client.upload_file_to_feishu(tmp_path, filename=summary_filename)
                 os.unlink(tmp_path)
                 if file_code:
                     file_codes.append(file_code)
