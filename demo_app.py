@@ -1527,9 +1527,16 @@ def _map_feishu_controls_to_config(controls):
 
     unmatched = []
 
+    # 如果配置中所有控件已有 feishu_id，跳过 API 查询
+    all_mapped = all(cfg.get("feishu_id") for cfg in cfg_controls.values()) and \
+                 all(cfg.get("feishu_id") for cfg in cfg_table_sub.values())
+    if all_mapped:
+        logger.info("All feishu controls already mapped, skipping API query")
+        return
+
     for key, cfg in cfg_controls.items():
         hint = cfg.get("control_name_hint", "")
-        if not hint:
+        if not hint or cfg.get("feishu_id"):
             continue
         matched = None
         if hint in api_by_name:

@@ -108,23 +108,23 @@
   "feishu_form": {
     "approval_code_env": "FEISHU_APPROVAL_CODE",
     "controls": {
-      "title": {"feishu_type": "input", "control_name_hint": "标题"},
-      "attachments": {"feishu_type": "attachmentV2", "control_name_hint": "附件"},
-      "table": {"feishu_type": "fieldList", "control_name_hint": "薪酬发放明细"},
-      "remark": {"feishu_type": "textarea", "control_name_hint": "备注"}
+      "title": {"feishu_type": "input", "control_name_hint": "标题", "feishu_id": "widget17811628753290001"},
+      "attachments": {"feishu_type": "attachmentV2", "control_name_hint": "附件", "feishu_id": "widget16496686388470001"},
+      "table": {"feishu_type": "fieldList", "control_name_hint": "薪酬发放明细", "feishu_id": "widget16496685286700001"},
+      "remark": {"feishu_type": "textarea", "control_name_hint": "备注", "feishu_id": "widget17811635300840001"}
     },
     "table_sub_controls": {
-      "report_name": {"feishu_type": "input"},
-      "unit_name": {"feishu_type": "input"},
-      "transfer_total": {"feishu_type": "amount"},
-      "deduction_total": {"feishu_type": "amount"},
-      "personal_tax": {"feishu_type": "amount"},
-      "personal_debt": {"feishu_type": "amount"},
-      "pay_cash": {"feishu_type": "amount"},
-      "personal_proxy_fee": {"feishu_type": "amount"},
-      "union_fee": {"feishu_type": "amount"},
-      "adjustment": {"feishu_type": "amount"},
-      "net_total": {"feishu_type": "amount"}
+      "report_name": {"feishu_type": "input", "feishu_id": "widget17811629865160001"},
+      "unit_name": {"feishu_type": "input", "feishu_id": "widget17811630160530001"},
+      "transfer_total": {"feishu_type": "amount", "feishu_id": "widget16496685800140001"},
+      "deduction_total": {"feishu_type": "amount", "feishu_id": "widget17811632175290001"},
+      "personal_tax": {"feishu_type": "amount", "feishu_id": "widget17811632599910001"},
+      "personal_debt": {"feishu_type": "amount", "feishu_id": "widget17811632838960001"},
+      "pay_cash": {"feishu_type": "amount", "feishu_id": "widget17816837666160001"},
+      "personal_proxy_fee": {"feishu_type": "amount", "feishu_id": "widget17811633075360001"},
+      "union_fee": {"feishu_type": "amount", "feishu_id": "widget17811633663510001"},
+      "adjustment": {"feishu_type": "amount", "feishu_id": "widget17811633849100001"},
+      "net_total": {"feishu_type": "amount", "feishu_id": "widget17811634196160001"}
     }
   }
 }
