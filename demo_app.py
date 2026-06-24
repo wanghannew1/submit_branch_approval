@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 import lark_oapi as lark
 from lark_oapi.api.contact.v3 import BatchGetIdUserRequest, BatchGetIdUserRequestBody
-from lark_oapi.api.contact.v3 import GetUserRequest
+from lark_oapi.api.contact.v3 import BasicBatchUserRequest, BasicBatchUserRequestBody
 from lark_oapi.api.approval.v4 import CreateInstanceRequest, InstanceCreate
 from requests_toolbelt import MultipartEncoder
 
@@ -195,22 +195,27 @@ class FeishuClient:
         return user_list[0].user_id  # 当 user_id_type=open_id 时，user_id 字段的值就是 open_id
 
     def get_user_department(self, open_id):
-        """获取用户主部门 department_id 和姓名，返回 (department_id, name)"""
-        request = GetUserRequest.builder() \
-            .user_id(open_id) \
+        """通过 basic_batch 获取用户姓名和部门，返回 (department_id, name)"""
+        request = BasicBatchUserRequest.builder() \
             .user_id_type("open_id") \
-            .department_id_type("department_id") \
+            .request_body(BasicBatchUserRequestBody.builder()
+                          .user_ids([open_id])
+                          .build()) \
             .build()
-        response = self.client.contact.v3.user.get(request)
+        response = self.client.contact.v3.user.basic_batch(request)
         if not response.success():
-            logger.error("get user failed: code=%s, msg=%s, log_id=%s",
+            logger.error("basic_batch failed: code=%s, msg=%s, log_id=%s",
                          response.code, response.msg, response.get_log_id())
             return None, None
-        user = response.data.user
-        dept_ids = user.department_ids
+        items = response.data.items or []
+        if not items:
+            logger.warning("basic_batch returned empty items for open_id=%s", open_id)
+            return None, None
+        user = items[0].user
+        dept_ids = user.department_ids or []
         dept_id = dept_ids[0] if dept_ids else ""
         name = getattr(user, "name", "") or ""
-        logger.info("get_user_department: name=%s, dept=%s", name, dept_id)
+        logger.info("basic_batch: name=%s, dept=%s", name, dept_id)
         return dept_id, name
 
     def upload_file_to_feishu(self, file_path):
