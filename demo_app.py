@@ -1193,12 +1193,12 @@ def main():
                 if not open_id:
                     st.error("手机号未找到对应用户")
                     return
-            department_id, user_name = client.get_user_department(open_id)
-            st.session_state.logged_in = True
-            st.session_state.open_id = open_id
-            st.session_state.department_id = department_id or ""
-            st.session_state.user_name = user_name or mobile
-                st.success(f"登录成功：{mobile} ({open_id})")
+                department_id, user_name = client.get_user_department(open_id)
+                st.session_state.logged_in = True
+                st.session_state.open_id = open_id
+                st.session_state.department_id = department_id or ""
+                st.session_state.user_name = user_name or mobile
+                st.success(f"登录成功：{user_name} ({open_id})")
                 st.rerun()
             except Exception as e:
                 st.error(f"登录失败：{e}")
