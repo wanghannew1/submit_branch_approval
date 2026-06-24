@@ -316,7 +316,7 @@ class FeishuClient:
         if remark_cfg.get("feishu_id"):
             form.append({
                 "id": remark_cfg["feishu_id"],
-                "type": "input",
+                "type": remark_cfg.get("feishu_type", "input"),
                 "value": remark
             })
 
