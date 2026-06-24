@@ -328,24 +328,31 @@ class FeishuClient:
 
         返回: instance_code (字符串) 或 None（失败时）
         """
-        body = InstanceCreate.builder() \
+        body_builder = InstanceCreate.builder() \
             .approval_code(approval_code) \
-            .open_id(open_id) \
-            .department_id(department_id) \
+            .open_id(open_id)
+        if department_id:
+            body_builder = body_builder.department_id(department_id)
+        body = body_builder \
             .form(form_json) \
             .uuid(str(uuid.uuid4())) \
             .build()
 
+        logger.info("create_approval_instance: open_id=%s, dept_id=%s",
+                    open_id, department_id or "(none)")
         request = CreateInstanceRequest.builder() \
             .request_body(body) \
             .build()
         response = self.client.approval.v4.instance.create(request)
 
         if not response.success():
-            print(f"create instance failed: code={response.code}, msg={response.msg}")
+            logger.error("create instance failed: code=%s, msg=%s, log_id=%s",
+                         response.code, response.msg, response.get_log_id())
             return None
 
-        return response.data.instance_code
+        instance_code = response.data.instance_code
+        logger.info("create instance success: instance_code=%s", instance_code)
+        return instance_code
 
 
 def _extract_year_month(text, current_year=None):
