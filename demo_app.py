@@ -195,7 +195,7 @@ class FeishuClient:
         return user_list[0].user_id  # 当 user_id_type=open_id 时，user_id 字段的值就是 open_id
 
     def get_user_department(self, open_id):
-        """通过 basic_batch 获取用户姓名和部门，返回 (department_id, name)"""
+        """通过 basic_batch 获取用户姓名，返回 (department_id, name)"""
         request = BasicBatchUserRequest.builder() \
             .user_id_type("open_id") \
             .request_body(BasicBatchUserRequestBody.builder()
@@ -207,16 +207,14 @@ class FeishuClient:
             logger.error("basic_batch failed: code=%s, msg=%s, log_id=%s",
                          response.code, response.msg, response.get_log_id())
             return None, None
-        items = response.data.items or []
-        if not items:
-            logger.warning("basic_batch returned empty items for open_id=%s", open_id)
+        users = response.data.users or []
+        if not users:
+            logger.warning("basic_batch returned empty for open_id=%s", open_id)
             return None, None
-        user = items[0].user
-        dept_ids = user.department_ids or []
-        dept_id = dept_ids[0] if dept_ids else ""
+        user = users[0]
         name = getattr(user, "name", "") or ""
-        logger.info("basic_batch: name=%s, dept=%s", name, dept_id)
-        return dept_id, name
+        logger.info("basic_batch: name=%s", name)
+        return "", name
 
     def upload_file_to_feishu(self, file_path):
         """上传文件到飞书审批系统，返回 file_code"""
