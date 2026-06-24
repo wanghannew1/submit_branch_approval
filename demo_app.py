@@ -289,7 +289,7 @@ class FeishuClient:
                         continue
                     val = item.get(key, "")
                     feishu_type = sub_cfg.get("feishu_type", "input")
-                    if feishu_type == "number":
+                    if feishu_type in ("number", "amount"):
                         val = str(float(val)) if val != "" else "0"
                     else:
                         val = str(val)
@@ -1549,7 +1549,7 @@ def _map_feishu_controls_to_config(controls):
         children = _extract_fieldlist_children(table_ctrl)
         if children:
             input_children = [c for c in children if isinstance(c, dict) and c.get("type") == "input"]
-            number_children = [c for c in children if isinstance(c, dict) and c.get("type") == "number"]
+            amount_children = [c for c in children if isinstance(c, dict) and c.get("type") in ("number", "amount")]
 
             input_keys = [k for k, v in cfg_table_sub.items() if v.get("feishu_type") == "input"]
             for i, key in enumerate(input_keys):
@@ -1562,16 +1562,16 @@ def _map_feishu_controls_to_config(controls):
                 else:
                     unmatched.append((key, f"input[{i}]"))
 
-            number_keys = [k for k, v in cfg_table_sub.items() if v.get("feishu_type") == "number"]
-            for i, key in enumerate(number_keys):
-                if i < len(number_children):
-                    cfg_table_sub[key]["feishu_id"] = number_children[i].get("id")
+            amount_keys = [k for k, v in cfg_table_sub.items() if v.get("feishu_type") in ("number", "amount")]
+            for i, key in enumerate(amount_keys):
+                if i < len(amount_children):
+                    cfg_table_sub[key]["feishu_id"] = amount_children[i].get("id")
                     print(
                         f"Mapped table_sub_control '{key}' -> "
-                        f"'{number_children[i].get('name')}' ({number_children[i].get('id')})"
+                        f"'{amount_children[i].get('name')}' ({amount_children[i].get('id')})"
                     )
                 else:
-                    unmatched.append((key, f"number[{i}]"))
+                    unmatched.append((key, f"amount[{i}]"))
         else:
             print("Warning: fieldList control found but no children extracted")
             for key in cfg_table_sub:
