@@ -101,6 +101,10 @@ DEFAULT_CONFIG = {
                 "keywords": ["扣工会会费", "工会会费"],
                 "label": "扣工会会费"
             },
+            "accident_insurance": {
+                "keywords": ["意外险（个人承担）"],
+                "label": "意外险（个人承担）"
+            },
             "pay_cash": {
                 "keywords": ["交纳现金", "缴纳现金"],
                 "label": "交纳现金"
@@ -135,6 +139,7 @@ DEFAULT_CONFIG = {
             {"key": "personal_debt", "label": "个人欠款"},
             {"key": "personal_proxy_fee", "label": "个人承担代理费"},
             {"key": "union_fee", "label": "扣工会会费"},
+            {"key": "accident_insurance", "label": "意外险（个人承担）"},
             {"key": "pay_cash", "label": "交纳现金"},
             {"key": "net_total", "label": "实发合计（元）"}
         ]
@@ -609,7 +614,7 @@ def parse_excel(file_bytes, filename):
 
     try:
         tax_val = float(transfer_total) - float(deduction_total) - float(net_total)
-        for key in ["personal_tax", "personal_debt", "adjustment", "personal_proxy_fee", "union_fee"]:
+        for key in ["personal_tax", "personal_debt", "adjustment", "personal_proxy_fee", "union_fee", "accident_insurance"]:
             if key in column_summary_values:
                 tax_val -= float(column_summary_values[key])
         if "pay_cash" in column_summary_values:
