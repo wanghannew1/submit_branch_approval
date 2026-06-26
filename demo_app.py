@@ -711,6 +711,10 @@ def parse_excel(file_bytes, filename):
         "column_indices": column_indices,
         "summary_row": summary_row,
         "data_rows": data_rows,
+        "_cfg_cols": {
+            "header_start_row": excel_cfg.get("header_start_row", default_excel["header_start_row"]),
+            "header_row_count": excel_cfg.get("header_row_count", default_excel["header_row_count"]),
+        },
     }
     # 把 excel.columns 里所有列的合计值都加上（包括 transfer/deduction/net）
     # 这样 table_field 可以引用任意已配置的列
@@ -880,6 +884,57 @@ def validate_payroll(parsed, validation_cfg, excel_cols):
             "detail": detail
         })
 
+    # === D. 表格格式验证：检查关键列是否在表头中找到、合计行是否有实际数值 ===
+    # 当配置的 header_start_row / header_row_count 与实际文件不匹配时，
+    # 即使列关键字被宽范围搜索找到，数据行和合计行也可能没有对应的值，
+    # 导致全部识别为 0 但校验仍通过（因为 0=0）。这个检查专门捕获这种情况。
+    _cfg_cols = parsed.get("_cfg_cols", {})
+    hdr_start = int(_cfg_cols.get("header_start_row", 3))
+    hdr_count = int(_cfg_cols.get("header_row_count", 3))
+    hdr_end = hdr_start + hdr_count - 1
+    critical_cols = ["transfer_total", "deduction_total", "net_total"]
+    col_labels_map = {k: col_label(k) for k in critical_cols}
+
+    missing_cols = [col_labels_map[k] for k in critical_cols if column_indices.get(k, -1) < 0]
+    if missing_cols:
+        passed = False
+        detail = (
+            f"未在表头中找到以下关键列：{'、'.join(missing_cols)}。"
+            f"请确认工资表表头起始行为第 {hdr_start} 行，第 {hdr_start}–{hdr_end} 行为组合表头（当前配置）。"
+        )
+    else:
+        # 列都找到了，检查合计行和数据行是否有实际数值
+        has_real_data = False
+        for k in critical_cols:
+            idx = column_indices.get(k, -1)
+            if idx >= 0 and summary_row and idx < len(summary_row):
+                v = summary_row[idx]
+                if v is not None:
+                    try:
+                        if float(v) != 0.0:
+                            has_real_data = True
+                            break
+                    except (ValueError, TypeError):
+                        pass
+        if not has_real_data and data_rows:
+            passed = False
+            # 用 config 的实际值提示
+            detail = (
+                f"识别到的转账合计、扣款合计、实发合计均为 0，但存在 {len(data_rows)} 行明细数据。"
+                f"可能是表格格式有误，请确认工资表表头起始行为第 {hdr_start} 行、"
+                f"第 {hdr_start}–{hdr_end} 行为组合表头。如文件格式不同，请联系管理员调整配置。"
+            )
+        else:
+            passed = True
+            detail = ""
+
+    checks.append({
+        "kind": "table_format",
+        "name": "表格格式验证",
+        "passed": passed,
+        "detail": detail,
+    })
+
     passed_count = sum(1 for c in checks if c["passed"])
     failed_count = len(checks) - passed_count
     return {
@@ -997,6 +1052,7 @@ def append_validation_sheet(file_bytes, validation_result,
         "column_sum": "纵向加总",
         "row_formula_summary": "横向公式",
         "row_formula_rows": "横向公式",
+        "table_format": "表格格式",
     }
 
     # 明细行
@@ -1170,6 +1226,7 @@ def build_summary_workbook(parsed_list, validation_results, tf_columns,
         "column_sum": "纵向加总",
         "row_formula_summary": "横向公式",
         "row_formula_rows": "横向公式",
+        "table_format": "表格格式",
         "signature_check": "签名栏",
     }
     cur = 4
@@ -1455,6 +1512,10 @@ def main():
     st.text_input("审批标题（自动生成）", value=title, disabled=True)
 
     # 零金额防护：转账合计和实发合计同时为0的工资表没有意义，禁止提交
+    excfg = CONFIG.get("excel", {})
+    hdr_s = excfg.get("header_start_row", 3)
+    hdr_c = excfg.get("header_row_count", 3)
+    hdr_e = hdr_s + hdr_c - 1
     zero_amount_blocked = False
     for p in parsed_list:
         trans = p.get("transfer_total", "0.00")
@@ -1462,8 +1523,9 @@ def main():
         if trans in ("0.00", "0", "", None) and net in ("0.00", "0", "", None):
             zero_amount_blocked = True
             st.error(
-                f"⚠️ {p['filename']}：转账合计和实发合计均为 0，"
-                f"该工资表无实际发放金额，请确认数据是否正确后重新上传。"
+                f"⚠️ {p['filename']}：识别到的转账合计和实发合计均为 0，"
+                f"可能是表格格式有误。请确认工资表表头起始行为第 {hdr_s} 行、"
+                f"第 {hdr_s}–{hdr_e} 行为组合表头。如文件格式不同，请联系管理员调整配置。"
             )
 
     # Submit button
