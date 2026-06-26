@@ -1456,6 +1456,18 @@ def main():
         if sig_parts:
             row["验证结果"] = " | ".join(sig_parts)
         preview_data.append(row)
+
+    # 隐藏所有文件均为 0 的列，减少横向滚动，方便用户聚焦有数值的列
+    # 不影响飞书 API 提交的数据（parsed_list / tf_columns 不变）
+    zero_column_labels = set()
+    for col in tf_columns:
+        if all(p.get(col["key"], "0.00") in ("0.00", "0", "", None) for p in parsed_list):
+            zero_column_labels.add(col["label"])
+    if zero_column_labels:
+        for row in preview_data:
+            for c in zero_column_labels:
+                row.pop(c, None)
+        st.caption(f"已隐藏全为零的列：{'、'.join(sorted(zero_column_labels))}。数据仍会提交至飞书。")
     st.dataframe(preview_data)
 
     # 生成审批标题（提前到这里，汇总表文件名要从标题派生）
