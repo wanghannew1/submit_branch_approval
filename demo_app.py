@@ -1595,7 +1595,7 @@ def main():
     preview_data = []
     tf_columns = CONFIG["table_field"]["columns"]
     for p in parsed_list:
-        key = _item_key(p)
+        key = _parsed_key(p)
         display_name = p["filename"]
         if p.get("sheet_name"):
             display_name += f" [{p['sheet_name']}]"
