@@ -422,23 +422,66 @@ def _extract_year_month(text, current_year=None):
     return ""
 
 
-def parse_excel(file_bytes, filename):
+def _get_excel_sheet_info(file_bytes, filename):
+    """检测 Excel 文件的 sheet 数量和名称。返回 (nsheets, sheet_names)。"""
+    filename_lower = filename.lower()
+    if filename_lower.endswith('.xls') and not filename_lower.endswith('.xlsx'):
+        import xlrd
+        wb = xlrd.open_workbook(file_contents=file_bytes)
+        return wb.nsheets, wb.sheet_names()
+    else:
+        wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
+        return len(wb.sheetnames), wb.sheetnames
+
+
+def _read_sheet_rows(file_bytes, filename, sheet_name=None, sheet_index=0):
+    """从 Excel 文件中读取指定 sheet 的行数据。"""
+    filename_lower = filename.lower()
+    if filename_lower.endswith('.xls') and not filename_lower.endswith('.xlsx'):
+        import xlrd
+        wb = xlrd.open_workbook(file_contents=file_bytes)
+        if sheet_name:
+            ws = wb.sheet_by_name(sheet_name)
+        else:
+            ws = wb.sheet_by_index(sheet_index)
+        return [ws.row_values(r) for r in range(ws.nrows)]
+    else:
+        wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
+        if sheet_name:
+            ws = wb[sheet_name]
+        else:
+            ws = wb.worksheets[sheet_index] if sheet_index < len(wb.worksheets) else wb.active
+        return list(ws.iter_rows(values_only=True))
+
+
+def _extract_sheet_to_xlsx(file_bytes, filename, sheet_name, sheet_index=0):
+    """从 .xls/.xlsx 文件中提取单个 sheet，保存为独立 .xlsx 字节流。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb_out = Workbook()
+    ws_out = wb_out.active
+    ws_out.title = sheet_name
+
+    rows = _read_sheet_rows(file_bytes, filename,
+                            sheet_name=sheet_name, sheet_index=sheet_index)
+    for r, row in enumerate(rows, start=1):
+        for c, val in enumerate(row, start=1):
+            ws_out.cell(row=r, column=c, value=val)
+
+    out = BytesIO()
+    wb_out.save(out)
+    return out.getvalue()
+
+
+def parse_excel(file_bytes, filename, sheet_name=None, sheet_index=0):
     """
     Extract payroll data from Excel bytes.
     Returns dict with report_name, unit_name, year_month,
     transfer_total, deduction_total, net_total, tax_and_others.
     """
-    # 根据扩展名选择解析库：.xlsx → openpyxl, .xls → xlrd
-    filename_lower = filename.lower()
-    if filename_lower.endswith('.xls') and not filename_lower.endswith('.xlsx'):
-        import xlrd
-        wb = xlrd.open_workbook(file_contents=file_bytes)
-        ws = wb.sheet_by_index(0)
-        rows = [ws.row_values(r) for r in range(ws.nrows)]
-    else:
-        wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
-        ws = wb.active
-        rows = list(ws.iter_rows(values_only=True))
+    rows = _read_sheet_rows(file_bytes, filename,
+                            sheet_name=sheet_name, sheet_index=sheet_index)
     if not rows:
         return None
 
@@ -540,9 +583,19 @@ def parse_excel(file_bytes, filename):
     summary_row = None
     summary_row_idx = -1
     for ridx, row in enumerate(rows):
-        if row and row[0] is not None:
-            first_cell = re.sub(r"\s+", "", str(row[0]))
-            if first_cell == marker_normalized:
+        if not row:
+            continue
+        # 先尝试第 0 列（A列）
+        if row[0] is not None:
+            cell = re.sub(r"\s+", "", str(row[0]))
+            if cell == marker_normalized:
+                summary_row = row
+                summary_row_idx = ridx
+                break
+        # 第 0 列没找到，扩展到第 1 列（B列），仅此两列
+        if summary_row is None and len(row) > 1 and row[1] is not None:
+            cell = re.sub(r"\s+", "", str(row[1]))
+            if cell == marker_normalized:
                 summary_row = row
                 summary_row_idx = ridx
                 break
@@ -561,6 +614,7 @@ def parse_excel(file_bytes, filename):
             "column_indices": {},
             "summary_row": None,
             "data_rows": [],
+            "extra_summary": {},
         }
         # 兜底也要把 excel.columns 里所有列填上 "0.00"，避免下游 KeyError
         for col_key in excel_cfg.get("columns", {}):
@@ -619,6 +673,29 @@ def parse_excel(file_bytes, filename):
                     break
         column_indices[col_key] = idx
 
+    # ---- 解析额外汇总行（溢缴款抵扣、甲方转款等，位于合计行之后） ----
+    extra_summary_cfg = excel_cfg.get("extra_summary_rows", {})
+    extra_summary_values = {}
+    if extra_summary_cfg and summary_row_idx >= 0:
+        xfer_idx = column_indices.get("transfer_total", -1)
+        for eridx in range(summary_row_idx + 1, len(rows)):
+            erow = rows[eridx]
+            if not erow:
+                continue
+            cell0 = str(erow[0]).strip() if erow[0] is not None else ''
+            cell1 = str(erow[1]).strip() if len(erow) > 1 and erow[1] is not None else ''
+            for key, defn in extra_summary_cfg.items():
+                for kw in defn.get("keywords", []):
+                    if kw in cell0 or kw in cell1:
+                        if 0 <= xfer_idx < len(erow):
+                            try:
+                                v = erow[xfer_idx]
+                                extra_summary_values[key] = f"{float(v):.2f}" if v is not None else "0.00"
+                            except (ValueError, TypeError):
+                                extra_summary_values[key] = "0.00"
+                        else:
+                            extra_summary_values[key] = "0.00"
+                        break
     # 数据行起始位置智能检测：从标题行向下扫描，找到第1列为数字序号的行作为数据起点
     # 这样即使 header_start_row 配置与实际文件不匹配，也能正确切分
     data_start_idx = None
@@ -688,13 +765,15 @@ def parse_excel(file_bytes, filename):
     for col_key, cidx in column_indices.items():
         column_summary_values[col_key] = get_val(cidx, col_key)
 
+    # 甲方转款不存在时默认等于转款合计
+    if "party_a_transfer" not in extra_summary_values:
+        extra_summary_values["party_a_transfer"] = column_summary_values.get("transfer_total", "0.00")
+
     try:
         tax_val = float(transfer_total) - float(deduction_total) - float(net_total)
-        for key in ["personal_tax", "personal_debt", "adjustment", "personal_proxy_fee", "union_fee", "accident_insurance"]:
-            if key in column_summary_values:
-                tax_val -= float(column_summary_values[key])
-        if "pay_cash" in column_summary_values:
-            tax_val += float(column_summary_values["pay_cash"])
+        ptax_key = "personal_tax"
+        if ptax_key in column_summary_values:
+            tax_val -= float(column_summary_values[ptax_key])
         if abs(tax_val) < 0.005:
             tax_val = 0.0
         tax_and_others = f"{tax_val:.2f}"
@@ -711,6 +790,7 @@ def parse_excel(file_bytes, filename):
         "column_indices": column_indices,
         "summary_row": summary_row,
         "data_rows": data_rows,
+        "extra_summary": extra_summary_values,
         "_cfg_cols": {
             "header_start_row": excel_cfg.get("header_start_row", default_excel["header_start_row"]),
             "header_row_count": excel_cfg.get("header_row_count", default_excel["header_row_count"]),
@@ -719,6 +799,7 @@ def parse_excel(file_bytes, filename):
     # 把 excel.columns 里所有列的合计值都加上（包括 transfer/deduction/net）
     # 这样 table_field 可以引用任意已配置的列
     result.update(column_summary_values)
+    result.update(extra_summary_values)
     return result
 
 
@@ -935,6 +1016,43 @@ def validate_payroll(parsed, validation_cfg, excel_cols):
         "detail": detail,
     })
 
+    # === E. 额外汇总行校验（溢缴款抵扣、甲方转款等） ===
+    for spec in validation_cfg.get("extra_summary_checks", []) or []:
+        name = spec.get("name", "<未命名额外汇总校验>")
+        col_key = spec.get("column", "transfer_total")
+        rhs_plus_keys = spec.get("rhs_plus_row_keys", [])
+        rhs_minus_keys = spec.get("rhs_minus_row_keys", [])
+        if not col_key:
+            continue
+
+        lhs_val = float(parsed.get(col_key, "0.00"))
+        extra = parsed.get("extra_summary", {})
+        rhs_val = 0.0
+        for k in rhs_plus_keys:
+            rhs_val += float(extra.get(k, "0.00"))
+        for k in rhs_minus_keys:
+            rhs_val -= float(extra.get(k, "0.00"))
+        rhs_val = round(rhs_val, 2)
+        diff = round(lhs_val - rhs_val, 2)
+        ok = abs(diff) <= tolerance
+
+        detail_parts = [f"{col_label(col_key)} = {lhs_val:.2f}"]
+        rhs_terms = []
+        for k in rhs_plus_keys:
+            rhs_terms.append(f"{k}({float(extra.get(k, '0.00')):.2f})")
+        for k in rhs_minus_keys:
+            rhs_terms.append(f"-{k}({float(extra.get(k, '0.00')):.2f})")
+        detail_parts.append(" + ".join(rhs_terms) + f" = {rhs_val:.2f}")
+        detail_parts.append("差 " + f"{diff:+.2f}")
+        detail = "" if ok else " | ".join(detail_parts)
+
+        checks.append({
+            "kind": "extra_summary",
+            "name": name,
+            "passed": ok,
+            "detail": detail,
+        })
+
     passed_count = sum(1 for c in checks if c["passed"])
     failed_count = len(checks) - passed_count
     return {
@@ -943,6 +1061,15 @@ def validate_payroll(parsed, validation_cfg, excel_cols):
         "failed_count": failed_count,
         "checks": checks,
     }
+
+
+def _parsed_key(item):
+    """从解析结果中生成唯一 key：单 sheet 用文件名，多 sheet 用 文件名::sheet名"""
+    fname = item.get("filename", "")
+    sname = item.get("sheet_name", "")
+    if sname:
+        return f"{fname}::{sname}"
+    return fname
 
 
 def check_signatures(file_bytes, filename, required_sigs):
@@ -1053,6 +1180,7 @@ def append_validation_sheet(file_bytes, validation_result,
         "row_formula_summary": "横向公式",
         "row_formula_rows": "横向公式",
         "table_format": "表格格式",
+        "extra_summary": "额外汇总",
     }
 
     # 明细行
@@ -1141,7 +1269,7 @@ def build_summary_workbook(parsed_list, validation_results, tf_columns,
             else:
                 ws.cell(row=i, column=cidx, value=v)
         # 验证结果列
-        vr = validation_results.get(p.get("filename"))
+        vr = validation_results.get(_parsed_key(p))
         sr = (signature_results or {}).get(p.get("filename"))
         status_parts = []
         fill = None
@@ -1227,12 +1355,13 @@ def build_summary_workbook(parsed_list, validation_results, tf_columns,
         "row_formula_summary": "横向公式",
         "row_formula_rows": "横向公式",
         "table_format": "表格格式",
+        "extra_summary": "额外汇总",
         "signature_check": "签名栏",
     }
     cur = 4
     for p in parsed_list:
         fn = p.get("filename", "")
-        vr = validation_results.get(fn)
+        vr = validation_results.get(_parsed_key(p))
         sr = (signature_results or {}).get(fn)
 
         # 签名栏检查行（放在最前面，最重要）
@@ -1364,31 +1493,61 @@ def main():
         st.info("请上传一个或多个 Excel 工资表文件")
         return
 
-    # Parse each file
+    # Parse each file (support multi-sheet auto-split)
     parsed_list = []
+    multi_sheet_files = set()
     for upfile in uploaded_files:
         file_bytes = upfile.read()
         upfile.seek(0)
-        parsed = parse_excel(file_bytes, upfile.name)
-        if parsed:
-            parsed_list.append({"filename": upfile.name, **parsed})
+        nsheets, sheet_names = _get_excel_sheet_info(file_bytes, upfile.name)
+        if nsheets > 1:
+            multi_sheet_files.add(upfile.name)
+            for sidx, sname in enumerate(sheet_names):
+                parsed = parse_excel(file_bytes, upfile.name,
+                                     sheet_name=sname, sheet_index=sidx)
+                if parsed:
+                    parsed_list.append({
+                        "filename": upfile.name,
+                        "sheet_name": sname,
+                        "sheet_index": sidx,
+                        **parsed,
+                    })
+        else:
+            parsed = parse_excel(file_bytes, upfile.name)
+            if parsed:
+                parsed_list.append({
+                    "filename": upfile.name,
+                    "sheet_name": "",
+                    "sheet_index": 0,
+                    **parsed,
+                })
+
+    if multi_sheet_files:
+        st.warning(
+            f"⚠️ 以下文件包含多个 sheet，"
+            f"已自动拆分为独立文件处理，建议将每个 sheet 保存为单独文件上传："
+            f"{'、'.join(multi_sheet_files)}"
+        )
 
     if not parsed_list:
         st.error("未能解析任何文件，请检查格式")
         return
 
-    # 标题 vs 文件名年月一致性检查（取标题为准；不一致时提醒制表人核对）
+    # 标题 vs 文件名年月一致性检查
     for p in parsed_list:
         t = p.get("year_month_from_title", "")
         f = p.get("year_month_from_filename", "")
+        label = p["filename"]
+        if p.get("sheet_name"):
+            label += f" [{p['sheet_name']}]"
         if t and f and t != f:
             st.warning(
-                f"⚠️ {p['filename']}：标题中年月「{t}」与文件名年月「{f}」不一致，"
+                f"⚠️ {label}：标题中年月「{t}」与文件名年月「{f}」不一致，"
                 f"已以**标题**为准。请确认报表标题是否需要更正。"
             )
         elif not t and f:
             st.warning(
-                f"⚠️ {p['filename']}：报表标题中未识别到年月，已退回使用文件名年月「{f}」。"
+                f"⚠️ {label}：报表标题中未识别到年月，已退回使用文件名年月「{f}」。"
                 f"建议在标题中明确写出年月。"
             )
 
@@ -1416,14 +1575,18 @@ def main():
     if val_cfg.get("enabled"):
         excel_cols_def = CONFIG.get("excel", {}).get("columns", {})
         for p in parsed_list:
+            key = _parsed_key(p)
             try:
                 vr = validate_payroll(p, val_cfg, excel_cols_def)
             except ValueError as e:
-                st.error(f"⚠️ {p['filename']} 校验配置错误：{e}")
+                label = p["filename"]
+                if p.get("sheet_name"):
+                    label += f" [{p['sheet_name']}]"
+                st.error(f"⚠️ {label} 校验配置错误：{e}")
                 vr = None
                 if val_cfg.get("strict"):
                     submit_blocked = True
-            validation_results[p["filename"]] = vr
+            validation_results[key] = vr
             if vr is not None and not vr["ok"] and val_cfg.get("strict"):
                 submit_blocked = True
 
@@ -1432,7 +1595,11 @@ def main():
     preview_data = []
     tf_columns = CONFIG["table_field"]["columns"]
     for p in parsed_list:
-        row = {"文件名": p["filename"], "年月": p["year_month"]}
+        key = _item_key(p)
+        display_name = p["filename"]
+        if p.get("sheet_name"):
+            display_name += f" [{p['sheet_name']}]"
+        row = {"文件名": display_name, "年月": p["year_month"]}
         for col in tf_columns:
             row[col["label"]] = p[col["key"]]
         sig_parts = []
@@ -1445,7 +1612,7 @@ def main():
                 sig_parts.append(f"❌ 缺少签名栏: {'、'.join(sr['missing'])}")
 
         if val_cfg.get("enabled"):
-            vr = validation_results.get(p["filename"])
+            vr = validation_results.get(key)
             if vr is None:
                 sig_parts.append("⚠️ 配置错误")
             elif vr["ok"]:
@@ -1553,37 +1720,82 @@ def main():
             department_id = st.session_state.department_id
 
             file_codes = []
-            # 总步数 = 每个原附件 + 汇总表（如果生成成功） + 创建审批实例
-            total_steps = len(uploaded_files) + (1 if summary_bytes else 0) + 1
+            # 总步数 = 各 sheet/附件 + 汇总表（如果生成成功） + 创建审批实例
+            total_items = sum(
+                _get_excel_sheet_info(upfile.read(), upfile.name)[0] 
+                for upfile in uploaded_files
+            )
+            # Rewind all uploaded_files after reading
+            for upfile in uploaded_files:
+                upfile.seek(0)
+            total_steps = total_items + (1 if summary_bytes else 0) + 1
             done_steps = 0
+
             for i, upfile in enumerate(uploaded_files):
-                status_text.text(f"正在上传：{upfile.name} ...")
                 file_bytes = upfile.read()
                 upfile.seek(0)
+                nsheets, sheet_names = _get_excel_sheet_info(file_bytes, upfile.name)
 
-                # 若启用了 write_back_sheet，把校验结果作为新 sheet 追加到 Excel 后再上传
-                vr = validation_results.get(upfile.name)
-                if (vr is not None
-                    and val_cfg.get("enabled")
-                    and val_cfg.get("write_back_sheet", True)
-                    and not upfile.name.lower().endswith(".xls")):
-                    file_bytes = append_validation_sheet(
-                        file_bytes,
-                        vr,
-                        sheet_name=val_cfg.get("write_back_sheet_name", "验证结果"),
-                        source_filename=upfile.name,
-                    )
+                # 多 sheet 文件：每个 sheet 拆分为独立 .xlsx 上传
+                if nsheets > 1:
+                    for sidx, sname in enumerate(sheet_names):
+                        label = f"{upfile.name} [{sname}]"
+                        status_text.text(f"正在上传：{label} ...")
 
-                import tempfile
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-                    tmp.write(file_bytes)
-                    tmp_path = tmp.name
-                file_code = client.upload_file_to_feishu(tmp_path, filename=upfile.name)
-                os.unlink(tmp_path)
-                if file_code:
-                    file_codes.append(file_code)
-                done_steps += 1
-                progress_bar.progress(done_steps / total_steps)
+                        sheet_bytes = _extract_sheet_to_xlsx(
+                            file_bytes, upfile.name, sname, sidx,
+                        )
+
+                        # 提取 sheet 对应的校验结果追加为验证 sheet
+                        val_key = f"{upfile.name}::{sname}"
+                        vr = validation_results.get(val_key)
+                        if (vr is not None
+                            and val_cfg.get("enabled")
+                            and val_cfg.get("write_back_sheet", True)):
+                            sheet_bytes = append_validation_sheet(
+                                sheet_bytes, vr,
+                                sheet_name=val_cfg.get("write_back_sheet_name", "验证结果"),
+                                source_filename=f"{upfile.name}[{sname}]",
+                            )
+
+                        import tempfile
+                        sheet_filename = f"{os.path.splitext(upfile.name)[0]}_{sname}.xlsx"
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                            tmp.write(sheet_bytes)
+                            tmp_path = tmp.name
+                        file_code = client.upload_file_to_feishu(tmp_path, filename=sheet_filename)
+                        os.unlink(tmp_path)
+                        if file_code:
+                            file_codes.append(file_code)
+                        done_steps += 1
+                        progress_bar.progress(done_steps / total_steps)
+                else:
+                    # 单 sheet 文件：原始流程
+                    status_text.text(f"正在上传：{upfile.name} ...")
+
+                    # 校验结果作为新 sheet 追加
+                    val_key = upfile.name
+                    vr = validation_results.get(val_key)
+                    if (vr is not None
+                        and val_cfg.get("enabled")
+                        and val_cfg.get("write_back_sheet", True)
+                        and not upfile.name.lower().endswith(".xls")):
+                        file_bytes = append_validation_sheet(
+                            file_bytes, vr,
+                            sheet_name=val_cfg.get("write_back_sheet_name", "验证结果"),
+                            source_filename=upfile.name,
+                        )
+
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                        tmp.write(file_bytes)
+                        tmp_path = tmp.name
+                    file_code = client.upload_file_to_feishu(tmp_path, filename=upfile.name)
+                    os.unlink(tmp_path)
+                    if file_code:
+                        file_codes.append(file_code)
+                    done_steps += 1
+                    progress_bar.progress(done_steps / total_steps)
 
             # 把汇总表也作为额外附件上传（如果生成成功）
             if summary_bytes:
