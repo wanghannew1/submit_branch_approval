@@ -1018,6 +1018,26 @@ def validate_payroll(parsed, validation_cfg, excel_cols):
         "detail": detail,
     })
 
+    # === F. 零金额检查：转款合计和实发合计同时为 0 则阻断 ===
+    def _is_zero(val):
+        if val is None:
+            return True
+        if isinstance(val, str):
+            return val.strip() in ("", "0", "0.00")
+        try:
+            return float(val) == 0.0
+        except (ValueError, TypeError):
+            return False
+    trans_val = parsed.get("transfer_total", "0.00")
+    net_val = parsed.get("net_total", "0.00")
+    zero_amount_ok = not (_is_zero(trans_val) and _is_zero(net_val))
+    checks.append({
+        "kind": "zero_amount",
+        "name": "零金额检查",
+        "passed": zero_amount_ok,
+        "detail": "" if zero_amount_ok else "转款合计和实发合计均为 0，请确认表头配置是否正确",
+    })
+
     # === E. 额外汇总行校验（溢缴款抵扣、甲方转款等） ===
     for spec in validation_cfg.get("extra_summary_checks", []) or []:
         name = spec.get("name", "<未命名额外汇总校验>")
@@ -1183,6 +1203,7 @@ def append_validation_sheet(file_bytes, validation_result,
         "row_formula_rows": "横向公式",
         "table_format": "表格格式",
         "extra_summary": "额外汇总",
+        "zero_amount": "零金额检查",
     }
 
     # 明细行
@@ -1358,6 +1379,7 @@ def build_summary_workbook(parsed_list, validation_results, tf_columns,
         "row_formula_rows": "横向公式",
         "table_format": "表格格式",
         "extra_summary": "额外汇总",
+        "zero_amount": "零金额检查",
         "signature_check": "签名栏",
     }
     cur = 4
@@ -1692,25 +1714,8 @@ def main():
     # 显示审批标题（title 已在上方汇总表前生成）
     st.text_input("审批标题（自动生成）", value=title, disabled=True)
 
-    # 零金额防护：转账合计和实发合计同时为0的工资表没有意义，禁止提交
-    excfg = CONFIG.get("excel", {})
-    hdr_s = excfg.get("header_start_row", 3)
-    hdr_c = excfg.get("header_row_count", 3)
-    hdr_e = hdr_s + hdr_c - 1
-    zero_amount_blocked = False
-    for p in parsed_list:
-        trans = p.get("transfer_total", "0.00")
-        net = p.get("net_total", "0.00")
-        if trans in ("0.00", "0", "", None) and net in ("0.00", "0", "", None):
-            zero_amount_blocked = True
-            st.error(
-                f"⚠️ {p['filename']}：识别到的转账合计和实发合计均为 0，"
-                f"可能是表格格式有误。请确认工资表表头起始行为第 {hdr_s} 行、"
-                f"第 {hdr_s}–{hdr_e} 行为组合表头。如文件格式不同，请联系管理员调整配置。"
-            )
-
     # Submit button
-    final_blocked = submit_blocked or signature_check_blocked or zero_amount_blocked
+    final_blocked = submit_blocked or signature_check_blocked
     if submit_blocked:
         st.error("⚠️ 校验未通过且当前为严格模式，请修改 Excel 后重新上传")
     if st.button("提交审批", disabled=final_blocked):
