@@ -1,12 +1,12 @@
 # Payroll2Feishu
 
-> 工资单推送飞书OA审批 — 单文件 Streamlit Demo
+> 分公司自製工资表 → 飞书 OA 审批 — 单文件 Streamlit 工具
 
 ---
 
 ## 功能
 
-用户通过手机号登录 → 上传多个 Excel 工资表 → 预览解析数据 → 一键提交飞书 OA 审批流程。
+接收分公司手工制作的 Excel 工资表（支持单 sheet 或多 sheet .xls/.xlsx），自动解析数据并提交飞书 OA 审批流程。多 sheet 文件会被自动拆分为独立工资表处理。
 
 ## 快速开始
 
