@@ -765,9 +765,11 @@ def parse_excel(file_bytes, filename, sheet_name=None, sheet_index=0):
     for col_key, cidx in column_indices.items():
         column_summary_values[col_key] = get_val(cidx, col_key)
 
-    # 甲方转款不存在时默认等于转款合计
-    if "party_a_transfer" not in extra_summary_values:
-        extra_summary_values["party_a_transfer"] = column_summary_values.get("transfer_total", "0.00")
+    # 额外汇总行缺失时兜底：party_a_transfer 默认等于转款合计，其余默认为 0
+    xfer_default = column_summary_values.get("transfer_total", "0.00")
+    for ekey in extra_summary_cfg:
+        if ekey not in extra_summary_values:
+            extra_summary_values[ekey] = xfer_default if ekey == "party_a_transfer" else "0.00"
 
     try:
         tax_val = float(transfer_total) - float(deduction_total) - float(net_total)
@@ -1601,7 +1603,7 @@ def main():
             display_name += f" [{p['sheet_name']}]"
         row = {"文件名": display_name, "年月": p["year_month"]}
         for col in tf_columns:
-            row[col["label"]] = p[col["key"]]
+            row[col["label"]] = p.get(col["key"], "")
         sig_parts = []
 
         sr = signature_results.get(p["filename"])
@@ -2036,4 +2038,8 @@ def _extract_fieldlist_children(table_ctrl):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        logger.exception("main() 未捕获异常")
+        raise
