@@ -1530,19 +1530,28 @@ def main():
                 parsed = parse_excel(file_bytes, upfile.name,
                                      sheet_name=sname, sheet_index=sidx)
                 if parsed:
+                    extracted = _extract_sheet_to_xlsx(
+                        file_bytes, upfile.name, sname, sidx,
+                    )
                     parsed_list.append({
                         "filename": upfile.name,
                         "sheet_name": sname,
                         "sheet_index": sidx,
+                        "_extracted_bytes": extracted,
                         **parsed,
                     })
         else:
             parsed = parse_excel(file_bytes, upfile.name)
             if parsed:
+                extracted = _extract_sheet_to_xlsx(
+                    file_bytes, upfile.name,
+                    sheet_name="", sheet_index=0,
+                )
                 parsed_list.append({
                     "filename": upfile.name,
                     "sheet_name": "",
                     "sheet_index": 0,
+                    "_extracted_bytes": extracted,
                     **parsed,
                 })
 
@@ -1711,6 +1720,22 @@ def main():
             f"或参见上方汇总表的「验证明细」sheet。"
         )
 
+    # 每个文件提供下载按钮
+    for p in parsed_list:
+        label = p["filename"]
+        if p.get("sheet_name"):
+            label += f" [{p['sheet_name']}]"
+        fname = p["filename"]
+        ext = os.path.splitext(fname)[1] or ".xlsx"
+        dl_name = f"{os.path.splitext(fname)[0]}_{p['sheet_name']}{ext}" if p.get("sheet_name") else fname
+        st.download_button(
+            label=f"📥 下载 {label}",
+            data=p["_extracted_bytes"],
+            file_name=dl_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"dl_{p['filename']}_{p.get('sheet_name', '')}",
+        )
+
     # 显示审批标题（title 已在上方汇总表前生成）
     st.text_input("审批标题（自动生成）", value=title, disabled=True)
 
@@ -1728,81 +1753,43 @@ def main():
 
             file_codes = []
             # 总步数 = 各 sheet/附件 + 汇总表（如果生成成功） + 创建审批实例
-            total_items = sum(
-                _get_excel_sheet_info(upfile.read(), upfile.name)[0] 
-                for upfile in uploaded_files
-            )
-            # Rewind all uploaded_files after reading
-            for upfile in uploaded_files:
-                upfile.seek(0)
+            total_items = len(parsed_list)
             total_steps = total_items + (1 if summary_bytes else 0) + 1
             done_steps = 0
 
-            for i, upfile in enumerate(uploaded_files):
-                file_bytes = upfile.read()
-                upfile.seek(0)
-                nsheets, sheet_names = _get_excel_sheet_info(file_bytes, upfile.name)
+            for p in parsed_list:
+                label = p["filename"]
+                if p.get("sheet_name"):
+                    label += f" [{p['sheet_name']}]"
+                status_text.text(f"正在上传：{label} ...")
 
-                # 多 sheet 文件：每个 sheet 拆分为独立 .xlsx 上传
-                if nsheets > 1:
-                    for sidx, sname in enumerate(sheet_names):
-                        label = f"{upfile.name} [{sname}]"
-                        status_text.text(f"正在上传：{label} ...")
+                sheet_bytes = p["_extracted_bytes"]
 
-                        sheet_bytes = _extract_sheet_to_xlsx(
-                            file_bytes, upfile.name, sname, sidx,
-                        )
+                # 取对应校验结果追加为验证 sheet
+                val_key = _parsed_key(p)
+                vr = validation_results.get(val_key)
+                if (vr is not None
+                    and val_cfg.get("enabled")
+                    and val_cfg.get("write_back_sheet", True)):
+                    sheet_bytes = append_validation_sheet(
+                        sheet_bytes, vr,
+                        sheet_name=val_cfg.get("write_back_sheet_name", "验证结果"),
+                        source_filename=label,
+                    )
 
-                        # 提取 sheet 对应的校验结果追加为验证 sheet
-                        val_key = f"{upfile.name}::{sname}"
-                        vr = validation_results.get(val_key)
-                        if (vr is not None
-                            and val_cfg.get("enabled")
-                            and val_cfg.get("write_back_sheet", True)):
-                            sheet_bytes = append_validation_sheet(
-                                sheet_bytes, vr,
-                                sheet_name=val_cfg.get("write_back_sheet_name", "验证结果"),
-                                source_filename=f"{upfile.name}[{sname}]",
-                            )
-
-                        import tempfile
-                        sheet_filename = f"{os.path.splitext(upfile.name)[0]}_{sname}.xlsx"
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-                            tmp.write(sheet_bytes)
-                            tmp_path = tmp.name
-                        file_code = client.upload_file_to_feishu(tmp_path, filename=sheet_filename)
-                        os.unlink(tmp_path)
-                        if file_code:
-                            file_codes.append(file_code)
-                        done_steps += 1
-                        progress_bar.progress(done_steps / total_steps)
-                else:
-                    # 单 sheet 文件：原始流程
-                    status_text.text(f"正在上传：{upfile.name} ...")
-
-                    # 校验结果作为新 sheet 追加
-                    val_key = upfile.name
-                    vr = validation_results.get(val_key)
-                    if (vr is not None
-                        and val_cfg.get("enabled")
-                        and val_cfg.get("write_back_sheet", True)
-                        and not upfile.name.lower().endswith(".xls")):
-                        file_bytes = append_validation_sheet(
-                            file_bytes, vr,
-                            sheet_name=val_cfg.get("write_back_sheet_name", "验证结果"),
-                            source_filename=upfile.name,
-                        )
-
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-                        tmp.write(file_bytes)
-                        tmp_path = tmp.name
-                    file_code = client.upload_file_to_feishu(tmp_path, filename=upfile.name)
-                    os.unlink(tmp_path)
-                    if file_code:
-                        file_codes.append(file_code)
-                    done_steps += 1
-                    progress_bar.progress(done_steps / total_steps)
+                import tempfile
+                fname = p["filename"]
+                if p.get("sheet_name"):
+                    fname = f"{os.path.splitext(fname)[0]}_{p['sheet_name']}.xlsx"
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                    tmp.write(sheet_bytes)
+                    tmp_path = tmp.name
+                file_code = client.upload_file_to_feishu(tmp_path, filename=fname)
+                os.unlink(tmp_path)
+                if file_code:
+                    file_codes.append(file_code)
+                done_steps += 1
+                progress_bar.progress(done_steps / total_steps)
 
             # 把汇总表也作为额外附件上传（如果生成成功）
             if summary_bytes:
