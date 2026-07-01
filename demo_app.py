@@ -1180,15 +1180,19 @@ def check_signatures(file_bytes, filename, required_sigs):
     if filename_lower.endswith('.xls') and not filename_lower.endswith('.xlsx'):
         import xlrd
         wb = xlrd.open_workbook(file_contents=file_bytes)
-        ws = wb.sheet_by_index(0)
         all_text = " ".join(
-            str(ws.cell_value(r, c)) for r in range(ws.nrows) for c in range(ws.ncols)
+            str(ws.cell_value(r, c))
+            for ws in wb.sheets()
+            for r in range(ws.nrows)
+            for c in range(ws.ncols)
         )
     else:
         wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
-        ws = wb.active
         all_text = " ".join(
-            str(cell.value or "") for row in ws.iter_rows() for cell in row
+            str(cell.value or "")
+            for ws in wb.worksheets
+            for row in ws.iter_rows()
+            for cell in row
         )
 
     all_text_lower = all_text.lower()
@@ -1587,6 +1591,7 @@ def main():
     # Parse each file (support multi-sheet auto-split)
     parsed_list = []
     multi_sheet_files = set()
+    skipped_sheets = []  # (filename, sheet_name)
     for upfile in uploaded_files:
         file_bytes = upfile.read()
         upfile.seek(0)
@@ -1607,6 +1612,8 @@ def main():
                         "_extracted_bytes": extracted,
                         **parsed,
                     })
+                else:
+                    skipped_sheets.append((upfile.name, sname))
         else:
             parsed = parse_excel(file_bytes, upfile.name)
             if parsed:
@@ -1627,6 +1634,12 @@ def main():
             f"⚠️ 以下文件包含多个 sheet，"
             f"已自动拆分为独立文件处理，建议将每个 sheet 保存为单独文件上传："
             f"{'、'.join(multi_sheet_files)}"
+        )
+
+    if skipped_sheets:
+        skip_msgs = [f"{fname}[{sname}]" for fname, sname in skipped_sheets]
+        st.warning(
+            f"⚠️ 以下 sheet 未能识别为有效工资表，已跳过：{'、'.join(skip_msgs)}"
         )
 
     if not parsed_list:
