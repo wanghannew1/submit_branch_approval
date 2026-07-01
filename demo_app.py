@@ -454,21 +454,78 @@ def _read_sheet_rows(file_bytes, filename, sheet_name=None, sheet_index=0):
         return list(ws.iter_rows(values_only=True))
 
 
+_XLS_CACHE: dict = {}  # filename → converted .xlsx bytes (LibreOffice)
+
 def _extract_sheet_to_xlsx(file_bytes, filename, sheet_name, sheet_index=0):
-    """从 .xls/.xlsx 文件中提取单个 sheet，保存为独立 .xlsx 字节流。"""
+    """从 .xls/.xlsx 文件中提取单个 sheet，保存为独立 .xlsx 字节流。
+
+    .xlsx 直接走 openpyxl 无格式损失；.xls 先用 LibreOffice 转换为 .xlsx 再提取。
+    """
     from openpyxl import Workbook
     from openpyxl.styles import Font
 
+    filename_lower = filename.lower()
+    is_xls = filename_lower.endswith('.xls') and not filename_lower.endswith('.xlsx')
+
+    if is_xls:
+        # 用 LibreOffice 转一次整文件，缓存起来
+        if filename not in _XLS_CACHE:
+            import tempfile, subprocess
+            import os
+            with tempfile.NamedTemporaryFile(suffix='.xls', delete=False) as tmp_in:
+                tmp_in.write(file_bytes)
+                tmp_in_path = tmp_in.name
+            out_dir = tempfile.mkdtemp()
+            try:
+                subprocess.run(
+                    ['libreoffice', '--headless', '--convert-to', 'xlsx',
+                     '--outdir', out_dir, tmp_in_path],
+                    check=True, capture_output=True, timeout=60,
+                )
+                out_path = os.path.join(out_dir,
+                    os.path.splitext(os.path.basename(tmp_in_path))[0] + '.xlsx')
+                with open(out_path, 'rb') as f:
+                    _XLS_CACHE[filename] = f.read()
+            finally:
+                os.unlink(tmp_in_path)
+                import shutil
+                shutil.rmtree(out_dir, ignore_errors=True)
+        # 从缓存拿转换后的 .xlsx，用 openpyxl 提取指定 sheet
+        import openpyxl
+        wb = openpyxl.load_workbook(BytesIO(_XLS_CACHE[filename]))
+        wb_out = Workbook()
+        ws_out = wb_out.active
+        if sheet_name:
+            ws_in = wb[sheet_name]
+        else:
+            ws_in = wb.worksheets[sheet_index] if sheet_index < len(wb.worksheets) else wb.active
+        ws_out.title = ws_in.title
+        for row in ws_in.iter_rows():
+            for cell in row:
+                ws_out.cell(row=cell.row, column=cell.column, value=cell.value)
+        # 复制列宽
+        for col_letter, dim in ws_in.column_dimensions.items():
+            if dim.width is not None:
+                ws_out.column_dimensions[col_letter].width = dim.width
+        out = BytesIO()
+        wb_out.save(out)
+        return out.getvalue()
+
+    # .xlsx 直接用 openpyxl 读取
+    wb = openpyxl.load_workbook(BytesIO(file_bytes))
     wb_out = Workbook()
     ws_out = wb_out.active
-    ws_out.title = sheet_name
-
-    rows = _read_sheet_rows(file_bytes, filename,
-                            sheet_name=sheet_name, sheet_index=sheet_index)
-    for r, row in enumerate(rows, start=1):
-        for c, val in enumerate(row, start=1):
-            ws_out.cell(row=r, column=c, value=val)
-
+    if sheet_name:
+        ws_in = wb[sheet_name]
+    else:
+        ws_in = wb.worksheets[sheet_index] if sheet_index < len(wb.worksheets) else wb.active
+    ws_out.title = ws_in.title
+    for row in ws_in.iter_rows():
+        for cell in row:
+            ws_out.cell(row=cell.row, column=cell.column, value=cell.value)
+    for col_letter, dim in ws_in.column_dimensions.items():
+        if dim.width is not None:
+            ws_out.column_dimensions[col_letter].width = dim.width
     out = BytesIO()
     wb_out.save(out)
     return out.getvalue()
@@ -1725,9 +1782,8 @@ def main():
         label = p["filename"]
         if p.get("sheet_name"):
             label += f" [{p['sheet_name']}]"
-        fname = p["filename"]
-        ext = os.path.splitext(fname)[1] or ".xlsx"
-        dl_name = f"{os.path.splitext(fname)[0]}_{p['sheet_name']}{ext}" if p.get("sheet_name") else fname
+        base = os.path.splitext(p["filename"])[0]
+        dl_name = f"{base}_{p['sheet_name']}.xlsx" if p.get("sheet_name") else f"{base}.xlsx"
         st.download_button(
             label=f"📥 下载 {label}",
             data=p["_extracted_bytes"],
@@ -1778,9 +1834,8 @@ def main():
                     )
 
                 import tempfile
-                fname = p["filename"]
-                if p.get("sheet_name"):
-                    fname = f"{os.path.splitext(fname)[0]}_{p['sheet_name']}.xlsx"
+                base = os.path.splitext(p["filename"])[0]
+                fname = f"{base}_{p['sheet_name']}.xlsx" if p.get("sheet_name") else f"{base}.xlsx"
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
                     tmp.write(sheet_bytes)
                     tmp_path = tmp.name
