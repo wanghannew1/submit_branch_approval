@@ -1800,16 +1800,27 @@ def main():
             f"或参见上方汇总表的「验证明细」sheet。"
         )
 
-    # 每个文件提供下载按钮
+    # 每个文件提供下载按钮（与飞书附件保持一致的 bytes：含验证结果 sheet）
     for p in parsed_list:
         label = p["filename"]
         if p.get("sheet_name"):
             label += f" [{p['sheet_name']}]"
         base = os.path.splitext(p["filename"])[0]
         dl_name = f"{base}_{p['sheet_name']}.xlsx" if p.get("sheet_name") else f"{base}.xlsx"
+        download_bytes = p["_extracted_bytes"]
+        val_key = _parsed_key(p)
+        vr = validation_results.get(val_key)
+        if (vr is not None
+            and val_cfg.get("enabled")
+            and val_cfg.get("write_back_sheet", True)):
+            download_bytes = append_validation_sheet(
+                download_bytes, vr,
+                sheet_name=val_cfg.get("write_back_sheet_name", "验证结果"),
+                source_filename=label,
+            )
         st.download_button(
             label=f"📥 下载 {label}",
-            data=p["_extracted_bytes"],
+            data=download_bytes,
             file_name=dl_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"dl_{p['filename']}_{p.get('sheet_name', '')}",
