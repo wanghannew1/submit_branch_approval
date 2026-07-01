@@ -460,10 +460,27 @@ def _extract_sheet_to_xlsx(file_bytes, filename, sheet_name, sheet_index=0):
     """从 .xls/.xlsx 文件中提取单个 sheet，保存为独立 .xlsx 字节流。
 
     .xlsx 直接走 openpyxl 无格式损失；.xls 先用 LibreOffice 转换为 .xlsx 再提取。
+    提取方式：加载整本 workbook，删除其他 sheet 后保存，保留全部格式。
     """
     import openpyxl
-    from openpyxl import Workbook
-    from openpyxl.styles import Font
+    import copy
+
+    def _keep_one_sheet(wb, sname, sidx):
+        """保留指定 sheet，删除其余，返回序列化字节。"""
+        keep = None
+        for ws in wb.worksheets:
+            if sname and ws.title == sname:
+                keep = ws
+            elif not sname and wb.worksheets.index(ws) == sidx:
+                keep = ws
+        if keep is None:
+            keep = wb.active
+        for ws in list(wb.worksheets):
+            if ws is not keep:
+                wb.remove(ws)
+        out = BytesIO()
+        wb.save(out)
+        return out.getvalue()
 
     filename_lower = filename.lower()
     is_xls = filename_lower.endswith('.xls') and not filename_lower.endswith('.xlsx')
@@ -500,61 +517,28 @@ def _extract_sheet_to_xlsx(file_bytes, filename, sheet_name, sheet_index=0):
                 import shutil
                 shutil.rmtree(out_dir, ignore_errors=True)
             if not success:
-                # fallback：xlrd 读值 + openpyxl 纯 Python 转换
                 logger.info("LibreOffice unavailable, falling back to xlrd-based conversion")
-                _XLS_CACHE[filename] = None  # 标记无需再试
+                # fallback 标记为 None
         cached = _XLS_CACHE.get(filename)
-        if cached is None:
-            # fallback 路径：xlrd → openpyxl
-            rows = _read_sheet_rows(file_bytes, filename,
-                                    sheet_name=sheet_name, sheet_index=sheet_index)
-            wb_out = Workbook()
-            ws_out = wb_out.active
-            ws_out.title = sheet_name or "Sheet1"
-            for r, row in enumerate(rows, start=1):
-                for c, val in enumerate(row, start=1):
-                    ws_out.cell(row=r, column=c, value=val)
-            out = BytesIO()
-            wb_out.save(out)
-            return out.getvalue()
-        # 从缓存拿转换后的 .xlsx，用 openpyxl 提取指定 sheet
-        wb = openpyxl.load_workbook(BytesIO(cached))
-        wb_out = Workbook()
-        ws_out = wb_out.active
-        if sheet_name:
-            ws_in = wb[sheet_name]
-        else:
-            ws_in = wb.worksheets[sheet_index] if sheet_index < len(wb.worksheets) else wb.active
-        ws_out.title = ws_in.title
-        for row in ws_in.iter_rows():
-            for cell in row:
-                ws_out.cell(row=cell.row, column=cell.column, value=cell.value)
-        # 复制列宽
-        for col_letter, dim in ws_in.column_dimensions.items():
-            if dim.width is not None:
-                ws_out.column_dimensions[col_letter].width = dim.width
+        if cached:
+            wb = openpyxl.load_workbook(BytesIO(cached))
+            return _keep_one_sheet(wb, sheet_name, sheet_index)
+        # fallback：xlrd 读值 + openpyxl（无格式，仅保证可用）
+        rows = _read_sheet_rows(file_bytes, filename,
+                                sheet_name=sheet_name, sheet_index=sheet_index)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = sheet_name or "Sheet1"
+        for r, row in enumerate(rows, start=1):
+            for c, val in enumerate(row, start=1):
+                ws.cell(row=r, column=c, value=val)
         out = BytesIO()
-        wb_out.save(out)
+        wb.save(out)
         return out.getvalue()
 
-    # .xlsx 直接用 openpyxl 读取
+    # .xlsx 直接加载，只保留目标 sheet
     wb = openpyxl.load_workbook(BytesIO(file_bytes))
-    wb_out = Workbook()
-    ws_out = wb_out.active
-    if sheet_name:
-        ws_in = wb[sheet_name]
-    else:
-        ws_in = wb.worksheets[sheet_index] if sheet_index < len(wb.worksheets) else wb.active
-    ws_out.title = ws_in.title
-    for row in ws_in.iter_rows():
-        for cell in row:
-            ws_out.cell(row=cell.row, column=cell.column, value=cell.value)
-    for col_letter, dim in ws_in.column_dimensions.items():
-        if dim.width is not None:
-            ws_out.column_dimensions[col_letter].width = dim.width
-    out = BytesIO()
-    wb_out.save(out)
-    return out.getvalue()
+    return _keep_one_sheet(wb, sheet_name, sheet_index)
 
 
 def parse_excel(file_bytes, filename, sheet_name=None, sheet_index=0):
