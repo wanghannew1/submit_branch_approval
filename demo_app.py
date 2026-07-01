@@ -461,6 +461,7 @@ def _extract_sheet_to_xlsx(file_bytes, filename, sheet_name, sheet_index=0):
 
     .xlsx 直接走 openpyxl 无格式损失；.xls 先用 LibreOffice 转换为 .xlsx 再提取。
     """
+    import openpyxl
     from openpyxl import Workbook
     from openpyxl.styles import Font
 
@@ -476,23 +477,48 @@ def _extract_sheet_to_xlsx(file_bytes, filename, sheet_name, sheet_index=0):
                 tmp_in.write(file_bytes)
                 tmp_in_path = tmp_in.name
             out_dir = tempfile.mkdtemp()
+            success = False
             try:
-                subprocess.run(
+                result = subprocess.run(
                     ['libreoffice', '--headless', '--convert-to', 'xlsx',
                      '--outdir', out_dir, tmp_in_path],
-                    check=True, capture_output=True, timeout=60,
+                    capture_output=True, timeout=60,
                 )
-                out_path = os.path.join(out_dir,
-                    os.path.splitext(os.path.basename(tmp_in_path))[0] + '.xlsx')
-                with open(out_path, 'rb') as f:
-                    _XLS_CACHE[filename] = f.read()
+                if result.returncode == 0:
+                    out_path = os.path.join(out_dir,
+                        os.path.splitext(os.path.basename(tmp_in_path))[0] + '.xlsx')
+                    with open(out_path, 'rb') as f:
+                        _XLS_CACHE[filename] = f.read()
+                    success = True
+                else:
+                    logger.warning("LibreOffice convert failed (code=%d): %s",
+                                   result.returncode, result.stderr.decode('utf-8', errors='replace'))
+            except Exception as e:
+                logger.warning("LibreOffice convert error: %s", e)
             finally:
                 os.unlink(tmp_in_path)
                 import shutil
                 shutil.rmtree(out_dir, ignore_errors=True)
+            if not success:
+                # fallback：xlrd 读值 + openpyxl 纯 Python 转换
+                logger.info("LibreOffice unavailable, falling back to xlrd-based conversion")
+                _XLS_CACHE[filename] = None  # 标记无需再试
+        cached = _XLS_CACHE.get(filename)
+        if cached is None:
+            # fallback 路径：xlrd → openpyxl
+            rows = _read_sheet_rows(file_bytes, filename,
+                                    sheet_name=sheet_name, sheet_index=sheet_index)
+            wb_out = Workbook()
+            ws_out = wb_out.active
+            ws_out.title = sheet_name or "Sheet1"
+            for r, row in enumerate(rows, start=1):
+                for c, val in enumerate(row, start=1):
+                    ws_out.cell(row=r, column=c, value=val)
+            out = BytesIO()
+            wb_out.save(out)
+            return out.getvalue()
         # 从缓存拿转换后的 .xlsx，用 openpyxl 提取指定 sheet
-        import openpyxl
-        wb = openpyxl.load_workbook(BytesIO(_XLS_CACHE[filename]))
+        wb = openpyxl.load_workbook(BytesIO(cached))
         wb_out = Workbook()
         ws_out = wb_out.active
         if sheet_name:
