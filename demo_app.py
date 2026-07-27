@@ -299,9 +299,6 @@ class FeishuClient:
                     if not feishu_id:
                         continue
                     val = item.get(key, "")
-                    # 甲方转款与转款合计相同时，飞书表单提交 0 避免重复值
-                    if key == "party_a_transfer" and str(val) == str(item.get("transfer_total", "0.00")):
-                        val = "0.00"
                     feishu_type = sub_cfg.get("feishu_type", "input")
                     if feishu_type in ("number", "amount"):
                         val = str(float(val)) if val != "" else "0"
