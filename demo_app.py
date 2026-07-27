@@ -1722,7 +1722,6 @@ def main():
         detected_label = rule_sets.get(detected_name, {}).get("name", detected_name) if detected_name else "未知"
 
         # 取 session_state 中保存的选择，优先于检测
-        rule_set_key = f"rule_set_{st.runtime.script_id}"
         options = ["自动检测"]
         options += [f"{rs['name']}" for rs_name, rs in rule_sets.items()]
 
