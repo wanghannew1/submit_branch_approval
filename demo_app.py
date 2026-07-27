@@ -434,6 +434,20 @@ def _get_excel_sheet_info(file_bytes, filename):
         return len(wb.sheetnames), wb.sheetnames
 
 
+def _fill_merged_cells(ws, rows):
+    """将合并单元格左上角的值填充到合并区域的其他单元格（仅填充 None 位置）。"""
+    result = [list(row) for row in rows]
+    for mc in ws.merged_cells.ranges:
+        top_val = result[mc.min_row - 1][mc.min_col - 1]
+        if top_val is None:
+            continue
+        for r in range(mc.min_row - 1, mc.max_row):
+            for c in range(mc.min_col - 1, mc.max_col):
+                if result[r][c] is None:
+                    result[r][c] = top_val
+    return result
+
+
 def _read_sheet_rows(file_bytes, filename, sheet_name=None, sheet_index=0):
     """从 Excel 文件中读取指定 sheet 的行数据。"""
     filename_lower = filename.lower()
@@ -451,7 +465,8 @@ def _read_sheet_rows(file_bytes, filename, sheet_name=None, sheet_index=0):
             ws = wb[sheet_name]
         else:
             ws = wb.worksheets[sheet_index] if sheet_index < len(wb.worksheets) else wb.active
-        return list(ws.iter_rows(values_only=True))
+        rows = list(ws.iter_rows(values_only=True))
+        return _fill_merged_cells(ws, rows)
 
 
 _XLS_CACHE: dict = {}  # filename → converted .xlsx bytes (LibreOffice)
@@ -723,19 +738,61 @@ def parse_excel(file_bytes, filename, sheet_name=None, sheet_index=0):
                         return cidx
         return -1
 
+    # 构建组合列头文本：每个列位置合并所有表头行的单元格文本
+    # 用于 |AND 关键字匹配（如 "养老|个人" 要求同列同时含"养老"和"个人"）
+    def _build_combined_headers(search_rows):
+        """返回 {col_idx: combined_text}，每个列合并 search_rows 中所有行该列的文本"""
+        combined = {}
+        for hrow in search_rows:
+            for cidx, cell in enumerate(hrow):
+                if cell is None:
+                    continue
+                text = str(cell).strip()
+                if not text:
+                    continue
+                combined[cidx] = combined.get(cidx, "") + " " + text
+        return {c: t.strip() for c, t in combined.items()}
+
+    _header_combined = _build_combined_headers(header_rows)
+    _fallback_combined = _build_combined_headers(fallback_rows) if fallback_rows else {}
+
+    def find_col_combined(and_keywords, combined_map):
+        """
+        在组合表头文本中查找同时包含所有 and_keywords 的列。
+        and_keywords: ["养老", "个人"] → 要求同列组合文本同时包含"养老"和"个人"
+        """
+        for cidx, ctext in combined_map.items():
+            if all(kw in ctext for kw in and_keywords):
+                return cidx
+        return -1
+
     excel_cols = excel_cfg["columns"]
 
     # 把所有 excel.columns 列都找出索引：先用配置的列头范围搜，搜不到则用宽范围兜底
+    # 支持两种关键字格式：
+    #   - 普通关键字（不含 |）：逐个匹配单元格文本（OR 语义，向后兼容）
+    #   - AND 关键字（含 |）：拆分后要求同列组合文本必须全部包含（如 "养老|个人"）
     column_indices = {}
     for col_key, col_def in excel_cols.items():
         idx = -1
-        for kw in col_def.get("keywords", []):
-            idx = find_col_index([kw])
+        kw_list = col_def.get("keywords", [])
+        for kw in kw_list:
+            if "|" in kw:
+                # AND 语义：拆分后要求所有部分在组合列头中都出现
+                parts = [p.strip() for p in kw.split("|") if p.strip()]
+                idx = find_col_combined(parts, _header_combined)
+            else:
+                # OR 语义：任一关键字匹配任一单元格即可
+                idx = find_col_index([kw])
             if idx != -1:
                 break
-        if idx == -1 and fallback_rows:
-            for kw in col_def.get("keywords", []):
-                idx = find_col_index_broad([kw])
+        if idx == -1 and fallback_rows and _fallback_combined:
+            for kw in kw_list:
+                if "|" in kw:
+                    parts = [p.strip() for p in kw.split("|") if p.strip()]
+                    idx = find_col_combined(parts, _fallback_combined)
+                else:
+                    idx = find_col_index_broad([kw])
                 if idx != -1:
                     break
         column_indices[col_key] = idx

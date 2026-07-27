@@ -107,15 +107,15 @@
         "label": "意外险"
       },
       "endowment_personal": {
-        "keywords": ["个人8%"],
+        "keywords": ["养老|个人"],
         "label": "养老个人"
       },
       "unemployment_personal": {
-        "keywords": ["个人0.3%"],
+        "keywords": ["失业|个人"],
         "label": "失业个人"
       },
       "industrial_injury": {
-        "keywords": ["单位0.48%"],
+        "keywords": ["工伤|单位"],
         "label": "工伤单位"
       }
     },
