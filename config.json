@@ -393,6 +393,26 @@
         "feishu_type": "amount",
         "feishu_id": "widget16496685800140001"
       },
+      "proxy_fee": {
+        "feishu_type": "amount",
+        "feishu_id": "widget17851332232590001"
+      },
+      "accident_insurance": {
+        "feishu_type": "amount",
+        "feishu_id": "widget17851332541430001"
+      },
+      "gross_pay": {
+        "feishu_type": "amount",
+        "feishu_id": "widget17851332961860001"
+      },
+      "endowment_personal": {
+        "feishu_type": "amount",
+        "feishu_id": "widget17851333370110001"
+      },
+      "unemployment_personal": {
+        "feishu_type": "amount",
+        "feishu_id": "widget17851333724920001"
+      },
       "tax_and_fee": {
         "feishu_type": "amount",
         "feishu_id": "widget17822963272840001"
