@@ -295,16 +295,16 @@
         "label": "税费"
       },
       {
-        "key": "gross_pay",
-        "label": "应发工资"
-      },
-      {
         "key": "proxy_fee",
         "label": "代理费"
       },
       {
         "key": "accident_insurance",
         "label": "意外险"
+      },
+      {
+        "key": "gross_pay",
+        "label": "应发工资"
       },
       {
         "key": "endowment_personal",
