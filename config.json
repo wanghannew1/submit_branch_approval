@@ -93,6 +93,30 @@
           "税费"
         ],
         "label": "税费"
+      },
+      "gross_pay": {
+        "keywords": ["应发工资"],
+        "label": "应发工资"
+      },
+      "proxy_fee": {
+        "keywords": ["代理费"],
+        "label": "代理费"
+      },
+      "accident_insurance": {
+        "keywords": ["意外险"],
+        "label": "意外险"
+      },
+      "endowment_personal": {
+        "keywords": ["个人8%"],
+        "label": "养老个人"
+      },
+      "unemployment_personal": {
+        "keywords": ["个人0.3%"],
+        "label": "失业个人"
+      },
+      "industrial_injury": {
+        "keywords": ["单位0.48%"],
+        "label": "工伤单位"
       }
     },
     "extra_summary_rows": {
@@ -173,6 +197,80 @@
         "业务审核"
       ]
     ]
+  },
+  "rule_sets": {
+    "default": {
+      "name": "通用规则(默认)",
+      "critical_cols": ["transfer_total", "deduction_total", "net_total"],
+      "column_sum_checks": [
+        {"column": "deduction_total"},
+        {"column": "personal_tax"},
+        {"column": "adjustment"},
+        {"column": "pay_cash"},
+        {"column": "net_total"},
+        {"column": "tax_and_fee"}
+      ],
+      "row_formulas": [
+        {
+          "name": "转款合计 = 扣款合计 + 个人所得税 + 个人其他调整 + 个人欠款 + 个人承担代理费 + 扣工会会费 - 交纳现金 + 实发工资",
+          "lhs": "transfer_total",
+          "rhs_plus": [
+            "deduction_total",
+            "personal_tax",
+            "adjustment",
+            "personal_debt",
+            "personal_proxy_fee",
+            "union_fee",
+            "net_total"
+          ],
+          "rhs_minus": ["pay_cash"]
+        }
+      ],
+      "extra_summary_checks": [
+        {
+          "name": "转款合计 = 溢缴款抵扣 + 甲方转款",
+          "column": "transfer_total",
+          "lhs_row_key": "summary",
+          "rhs_plus_row_keys": ["overpayment_offset", "party_a_transfer"],
+          "rhs_minus_row_keys": []
+        }
+      ]
+    },
+    "outstaff": {
+      "name": "劳务外包规则",
+      "critical_cols": ["transfer_total", "net_total"],
+      "column_sum_checks": [
+        {"column": "gross_pay"},
+        {"column": "proxy_fee"},
+        {"column": "transfer_total"},
+        {"column": "deduction_total"},
+        {"column": "net_total"}
+      ],
+      "row_formulas": [
+        {
+          "name": "转款合计 = 代理费 + 意外险 + 养老个人 + 失业个人 + 实发工资 + 个税",
+          "lhs": "transfer_total",
+          "rhs_plus": [
+            "proxy_fee",
+            "accident_insurance",
+            "endowment_personal",
+            "unemployment_personal",
+            "net_total",
+            "personal_tax"
+          ],
+          "rhs_minus": []
+        }
+      ],
+      "extra_summary_checks": [
+        {
+          "name": "转款合计 = 溢缴款抵扣 + 甲方转款",
+          "column": "transfer_total",
+          "lhs_row_key": "summary",
+          "rhs_plus_row_keys": ["overpayment_offset", "party_a_transfer"],
+          "rhs_minus_row_keys": []
+        }
+      ]
+    }
   },
   "table_field": {
     "columns": [

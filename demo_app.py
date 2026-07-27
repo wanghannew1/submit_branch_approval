@@ -901,7 +901,32 @@ def _row_label(row, default_label):
     return default_label
 
 
-def validate_payroll(parsed, validation_cfg, excel_cols):
+def detect_rule_set(parsed, rule_sets):
+    """
+    根据解析结果中实际找到的列自动判断应使用的规则集。
+    parsed: parse_excel 的返回值（必须含 column_indices）
+    rule_sets: CONFIG['rule_sets'] 字典 {名称: {...}}
+    返回规则集名称（如 'default' / 'outstaff'），或 None（无法判断）。
+    """
+    col_indices = parsed.get("column_indices", {})
+
+    has_deduction = col_indices.get("deduction_total", -1) >= 0
+    # default 规则独有的列：个人欠款/个人承担代理费/交纳现金/个人其他调整/扣工会会费
+    has_full_payroll = any(
+        col_indices.get(k, -1) >= 0
+        for k in ("personal_debt", "personal_proxy_fee", "pay_cash",
+                  "adjustment", "union_fee")
+    )
+
+    # 有 扣款合计 且存在 default 独有列 → default
+    if has_deduction and has_full_payroll:
+        return "default"
+
+    # 其余情况（有扣款但无独有列，如雪绒花；或无扣款合计）→ outstaff
+    return "outstaff"
+
+
+def validate_payroll(parsed, validation_cfg, excel_cols, critical_cols=None):
     """
     校验解析后的工资表数据，返回结构化结果。
     parsed: parse_excel 的返回值（必须含 column_indices/summary_row/data_rows）
@@ -1042,7 +1067,8 @@ def validate_payroll(parsed, validation_cfg, excel_cols):
     hdr_start = int(_cfg_cols.get("header_start_row", 3))
     hdr_count = int(_cfg_cols.get("header_row_count", 3))
     hdr_end = hdr_start + hdr_count - 1
-    critical_cols = ["transfer_total", "deduction_total", "net_total"]
+    if critical_cols is None:
+        critical_cols = ["transfer_total", "deduction_total", "net_total"]
     col_labels_map = {k: col_label(k) for k in critical_cols}
 
     missing_cols = [col_labels_map[k] for k in critical_cols if column_indices.get(k, -1) < 0]
@@ -1666,6 +1692,7 @@ def main():
 
     # 工资表内容校验
     val_cfg = CONFIG.get("validation", DEFAULT_CONFIG["validation"])
+    rule_sets = CONFIG.get("rule_sets", {})
     required_sigs = val_cfg.get("required_signatures", [])
     validation_results = {}  # {filename: validation_result}
     signature_results = {}   # {filename: signature_check_result}
@@ -1685,12 +1712,72 @@ def main():
                     f"⚠️ {upfile.name}：缺少签名栏信息 — {missing_list}。"
                     f"请确保 Excel 文件中包含这些字段后再上传。"
                 )
+
+    # 规则集选择（自动检测 / 手动切换）
+    selected_rule_set = None
+    if rule_sets and parsed_list:
+        # 自动检测（以第一个解析条目为准）
+        first_parsed = parsed_list[0]
+        detected_name = detect_rule_set(first_parsed, rule_sets)
+        detected_label = rule_sets.get(detected_name, {}).get("name", detected_name) if detected_name else "未知"
+
+        # 取 session_state 中保存的选择，优先于检测
+        rule_set_key = f"rule_set_{st.runtime.script_id}"
+        options = ["自动检测"]
+        options += [f"{rs['name']}" for rs_name, rs in rule_sets.items()]
+
+        # 预设 session_state
+        if "rule_set_choice" not in st.session_state:
+            st.session_state.rule_set_choice = "自动检测"
+
+        chosen = st.selectbox(
+            "校验规则",
+            options=options,
+            index=0 if st.session_state.rule_set_choice == "自动检测"
+                   else options.index(st.session_state.rule_set_choice)
+                   if st.session_state.rule_set_choice in options else 0,
+            key="rule_set_select",
+        )
+        st.session_state.rule_set_choice = chosen
+
+        # 确定最终使用的规则集
+        if chosen == "自动检测" and detected_name:
+            selected_rule_set = rule_sets[detected_name]
+            selected_rule_set_name = detected_name
+            st.caption(f"🔄 自动检测：{detected_label}")
+        elif chosen != "自动检测":
+            # 用户手动选择：从选项名反查规则集名
+            manual_name = next((rs_name for rs_name, rs in rule_sets.items()
+                                if rs["name"] == chosen), None)
+            if manual_name:
+                selected_rule_set = rule_sets[manual_name]
+                selected_rule_set_name = manual_name
+        else:
+            selected_rule_set = None
+
     if val_cfg.get("enabled"):
         excel_cols_def = CONFIG.get("excel", {}).get("columns", {})
         for p in parsed_list:
             key = _parsed_key(p)
             try:
-                vr = validate_payroll(p, val_cfg, excel_cols_def)
+                # 使用选中的规则集配置（兜底到顶层 validation）
+                if selected_rule_set:
+                    rule_val_cfg = {
+                        "enabled": True,
+                        "strict": val_cfg.get("strict", True),
+                        "tolerance": val_cfg.get("tolerance", 0.0),
+                        "write_back_sheet": val_cfg.get("write_back_sheet", True),
+                        "write_back_sheet_name": val_cfg.get("write_back_sheet_name", "验证结果"),
+                        "column_sum_checks": selected_rule_set.get("column_sum_checks", []),
+                        "row_formulas": selected_rule_set.get("row_formulas", []),
+                        "extra_summary_checks": selected_rule_set.get("extra_summary_checks", []),
+                    }
+                    critical_cols = selected_rule_set.get("critical_cols")
+                else:
+                    rule_val_cfg = val_cfg
+                    critical_cols = None
+                vr = validate_payroll(p, rule_val_cfg, excel_cols_def,
+                                      critical_cols=critical_cols)
             except ValueError as e:
                 label = p["filename"]
                 if p.get("sheet_name"):
