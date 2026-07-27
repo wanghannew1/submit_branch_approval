@@ -295,6 +295,26 @@
         "label": "税费"
       },
       {
+        "key": "gross_pay",
+        "label": "应发工资"
+      },
+      {
+        "key": "proxy_fee",
+        "label": "代理费"
+      },
+      {
+        "key": "accident_insurance",
+        "label": "意外险"
+      },
+      {
+        "key": "endowment_personal",
+        "label": "养老个人"
+      },
+      {
+        "key": "unemployment_personal",
+        "label": "失业个人"
+      },
+      {
         "key": "deduction_total",
         "label": "扣款合计"
       },
