@@ -778,11 +778,9 @@ def parse_excel(file_bytes, filename, sheet_name=None, sheet_index=0):
         kw_list = col_def.get("keywords", [])
         for kw in kw_list:
             if "|" in kw:
-                # AND 语义：拆分后要求所有部分在组合列头中都出现
                 parts = [p.strip() for p in kw.split("|") if p.strip()]
                 idx = find_col_combined(parts, _header_combined)
             else:
-                # OR 语义：任一关键字匹配任一单元格即可
                 idx = find_col_index([kw])
             if idx != -1:
                 break
@@ -837,6 +835,19 @@ def parse_excel(file_bytes, filename, sheet_name=None, sheet_index=0):
         header_end_idx = data_start_idx
     else:
         header_end_idx = header_start_idx + header_row_count
+
+    # 表头验证：检测配置的表头范围是否侵入了数据行区域
+    # 当 data_start_idx 落在配置的 header_rows 范围内时，说明 header_start_row/header_row_count 不匹配
+    _header_data_overlap = None
+    if data_start_idx is not None and data_start_idx < header_start_idx + header_row_count:
+        cfg_start = header_start_idx + 1  # 转 1-based
+        cfg_end = header_start_idx + header_row_count
+        actual_end = data_start_idx  # 实际表头截止行（0-based）
+        _header_data_overlap = {
+            "expected_rows": f"第 {cfg_start}–{cfg_end} 行",
+            "actual_header_rows": f"第 {cfg_start}–{actual_end} 行",
+            "data_start_row": data_start_idx + 1,
+        }
 
     # 数据行 = 表头之后 到 合计行之前；过滤掉全空行
     data_rows = []
@@ -917,6 +928,7 @@ def parse_excel(file_bytes, filename, sheet_name=None, sheet_index=0):
         "summary_row": summary_row,
         "data_rows": data_rows,
         "extra_summary": extra_summary_values,
+        "_header_data_overlap": _header_data_overlap,
         "_cfg_cols": {
             "header_start_row": excel_cfg.get("header_start_row", default_excel["header_start_row"]),
             "header_row_count": excel_cfg.get("header_row_count", default_excel["header_row_count"]),
@@ -1114,6 +1126,30 @@ def validate_payroll(parsed, validation_cfg, excel_cols, critical_cols=None):
             "failed_rows": failed_rows,
             "passed": passed,
             "detail": detail
+        })
+
+    # === D0. 表头结构验证：检测配置的表头范围是否与实际文件不匹配 ===
+    _overlap = parsed.get("_header_data_overlap")
+    if _overlap:
+        checks.append({
+            "kind": "header_structure",
+            "name": "表头结构验证",
+            "passed": False,
+            "detail": (
+                f"表头配置与实际文件不匹配。"
+                f"配置预期 {_overlap['expected_rows']} 为组合表头，"
+                f"但第 {_overlap['data_start_row']} 行已是数据行"
+                f"（实际表头只有 {_overlap['actual_header_rows']}）。"
+                f"请调整配置中的 header_start_row / header_row_count，"
+                f"或联系管理员更新配置以适配此文件格式。"
+            ),
+        })
+    else:
+        checks.append({
+            "kind": "header_structure",
+            "name": "表头结构验证",
+            "passed": True,
+            "detail": "",
         })
 
     # === D. 表格格式验证：检查关键列是否在表头中找到、合计行是否有实际数值 ===
@@ -1356,6 +1392,7 @@ def append_validation_sheet(file_bytes, validation_result,
         "row_formula_summary": "横向公式",
         "row_formula_rows": "横向公式",
         "table_format": "表格格式",
+        "header_structure": "表头验证",
         "extra_summary": "额外汇总",
         "zero_amount": "零金额检查",
     }
@@ -1532,6 +1569,7 @@ def build_summary_workbook(parsed_list, validation_results, tf_columns,
         "row_formula_summary": "横向公式",
         "row_formula_rows": "横向公式",
         "table_format": "表格格式",
+        "header_structure": "表头验证",
         "extra_summary": "额外汇总",
         "zero_amount": "零金额检查",
         "signature_check": "签名栏",
