@@ -244,11 +244,16 @@
         {"column": "proxy_fee"},
         {"column": "transfer_total"},
         {"column": "deduction_total"},
-        {"column": "net_total"}
+        {"column": "net_total"},
+        {"column": "personal_tax"},
+        {"column": "adjustment"},
+        {"column": "accident_insurance"},
+        {"column": "endowment_personal"},
+        {"column": "unemployment_personal"}
       ],
       "row_formulas": [
         {
-          "name": "转款合计 = 代理费 + 意外险 + 养老个人 + 失业个人 + 实发工资 + 个税",
+          "name": "转款合计 = 代理费 + 意外险 + 养老个人 + 失业个人 + 实发工资 + 个税 + 个人其他调整",
           "lhs": "transfer_total",
           "rhs_plus": [
             "proxy_fee",
@@ -256,7 +261,8 @@
             "endowment_personal",
             "unemployment_personal",
             "net_total",
-            "personal_tax"
+            "personal_tax",
+            "adjustment"
           ],
           "rhs_minus": []
         }
